@@ -1,0 +1,147 @@
+---
+title: "SGH_Malaria"
+author: "Kevin"
+date: "5/7/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+Load Libraries
+```{r, warning=FALSE, message=FALSE}
+library(readr)
+library(ggplot2)
+library(tidyverse)
+library(validate)
+```
+
+## Download csv
+```{r,message=FALSE,warning=FALSE}
+deaths.tbl<-read_csv(url("https://github.com/rfordatascience/tidytuesday/raw/master/data/2018/2018-11-13/malaria_deaths.csv"))
+deaths.age.tbl<-read_csv(url("https://github.com/rfordatascience/tidytuesday/raw/master/data/2018/2018-11-13/malaria_deaths_age.csv"))
+inc.tbl<-read_csv(url("https://github.com/rfordatascience/tidytuesday/raw/master/data/2018/2018-11-13/malaria_inc.csv"))
+death.df<-as.data.frame(deaths.tbl)
+death.age.df<-as.data.frame(deaths.age.tbl)
+inc.df<-as.data.frame(inc.tbl)
+
+names(death.df)[4] <- "Death.rate"
+names(inc.df)[4] <-"Incidence"
+```
+
+## Understand Dataset
+```{r}
+#Death Rate
+length(unique(death.df$Entity))
+length(unique(death.df$Code))
+sum(is.na(death.df$Death.rate))
+
+#Death Rate per age group
+length(unique(death.age.df$entity))
+length(unique(death.age.df$code))
+length(unique(death.age.df$age_group))
+sum(is.na(death.age.df$deaths))
+
+#Incidence
+length(unique(inc.df$Entity))
+length(unique(inc.df$Code))
+sum(is.na(inc.df$Incidence))
+```
+
+
+## Data Validation
+```{r}
+#Death Rate
+rule<-validator(contains_at_least( keys = data.frame(Year = (1990:2016)), 
+                                   by=list(Entity)),
+                in_range(Death.rate, min = 0, max = 100000))
+summary(confront(death.df,rule))[1:7]
+```
+Data available for all countries and region from 1990 to 2016
+Death Rate is less than 100,000.
+```{r}
+#Death Rate per Age Group
+rule<-validator(contains_at_least( keys = data.frame(year = (1990:2016)), 
+                                   by=list(entity,age_group)),
+                contains_at_least(keys = data.frame(age_group=unique(death.age.df$age_group)), 
+                                  by=list(entity, year)))
+summary(confront(death.age.df,rule))[1:7]
+```
+Data available for all countries and region and age group from 1990 to 2016.
+```{r}
+#Incidence Rate
+rule<-validator(contains_at_least( keys = data.frame(Year = seq(2000,2015,5)), 
+                                   by=list(Entity)),
+                in_range(Incidence, min = 0, max = 1000))
+summary(confront(inc.df,rule))[1:7]
+violating(inc.df,confront(inc.df,rule))
+```
+
+Data available for all countries and region from 1990 to 2016. However, Turkey in 2000 had an incidence rate of > 1000. We shall impute with incidence rate from 2005.
+```{r}
+  inc.df[465,4]<-inc.df[466,4]
+
+```
+## Separate countries and regions
+```{r}
+death.sep<-is.na(death.df$Code)
+d.region<-death.df[death.sep,]
+d.country<-death.df[!death.sep,]
+
+death.age.sep<-is.na(death.age.df$code)
+da.region<-death.age.df[death.age.sep,]
+da.country<-death.age.df[!death.age.sep,]
+
+inc.sep<-is.na(inc.df$Code)
+inc.region<-inc.df[inc.sep,]
+inc.country<-inc.df[!inc.sep,]
+
+```
+
+## World Wide Malaria Death Rate
+```{r}
+d.plot<-death.df[death.df$Entity %in% c("World","Sub-Saharan Africa","South Asia","Southeast Asia"),]
+ggplot(d.plot,aes(x=Year,y=Death.rate, color= Entity)) +
+    labs(y= "Death rate (per 100,000)")+
+    ggtitle("Malaria Death rate")+
+    geom_vline(xintercept = 2003)+
+    geom_point()+
+    geom_line ()+
+    scale_x_continuous(breaks = round(seq(min(d.plot$Year), max(d.plot$Year), by = 2),1)) +
+    scale_y_continuous(breaks = round(seq(min(d.plot$Death.rate), max(d.plot$Death.rate), length.out = 20),1)) +
+    theme_bw()
+
+```
+
+Sub-Saharan Africa's malaria death rate has been consistently high. It far triumphs over the world average and even the second highest region of South Asia. However, death rate has been falling consistently since 2003.
+
+```{r}
+da.age.df<-da.country[da.country$entity=="World",]
+ggplot(da.age.df,aes(x=reorder(age_group, -deaths), y=deaths))+
+  geom_point() + 
+  ggtitle("Number of Deaths across age group throughout the years")+
+  stat_boxplot(geom = "errorbar", width = 0.2) +geom_boxplot() +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE))+
+  labs (x="Age Group", y= "Deaths")+
+  theme_bw()
+
+       
+```
+
+Across the years, those who are under 5 have a much higher death count from malaria compared to other age groups. Age also seemed to correlate with the variance in malaria deaths, those in the older age group had a very small spread in death across the years comapred to younger age group
+
+```{r}
+inc.plot<-inc.country[!inc.country$Entity=="World",]
+death.plot<-d.country[!d.country$Entity=="World",]
+join.df<-merge(x = inc.plot, y = death.plot, by = c("Entity","Year"), all.x = FALSE)
+
+corr.coef <- round(cor(join.df$Incidence,join.df$Death.rate), digits = 2)
+ggplot(join.df,aes(x=Incidence, y=Death.rate))+
+  geom_point(alpha=0.3)+
+  geom_smooth(method='lm', formula= y~x)+
+  labs(x="Incidence Rate",y="Death Rate")+
+  ggtitle("Correlation of Death Rate and Incidence Rate")+
+  annotate("text",x=600,y=50,label =paste("r=",corr.coef))
+
+join.df[join.df$Incidence==max(join.df$Incidence),]
+```
+Incidence and death rate is highly correlated (r=.88). However, there are still outliers, such as Ethiopia in 2000. It might be due to different reasons such as better treatment methods that reduces death even in such high incidences or it might be due to inaccurate data collection method.
